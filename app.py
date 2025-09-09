@@ -701,15 +701,118 @@ def create_solutions_tab(simulator, analysis_results):
     st.header("💡 Optimization Solutions")
     st.markdown("**Data-driven staffing reallocation strategies and their expected impact**")
     
+    # First show the baseline clearly
+    baseline_result = analysis_results['detailed_results'][0]  # Baseline is always first
+    
+    st.markdown("---")
+    st.subheader("📊 Current Baseline Situation")
+    st.markdown("**Understanding the problems we need to solve**")
+    
+    # Baseline metrics in a prominent way
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric(
+            "❌ Understaffing Issue",
+            f"{baseline_result['baseline_understaffing']:.1f} pax-hrs",
+            help="Total passenger-hours of unmet demand daily"
+        )
+    
+    with col2:
+        avg_wait_baseline = baseline_result['baseline_understaffing'] * 2.5  # Convert to wait time
+        st.metric(
+            "⏰ Excess Wait Time",
+            f"{avg_wait_baseline:.1f} min/day",
+            help="Additional wait time caused by understaffing"
+        )
+    
+    with col3:
+        complaints_baseline = int(baseline_result['baseline_understaffing'] * 0.3)
+        st.metric(
+            "😞 Daily Complaints",
+            f"~{complaints_baseline}",
+            help="Estimated complaints due to service delays"
+        )
+    
+    with col4:
+        morning_gap = baseline_result['morning_improvement']  # This shows current morning gap
+        st.metric(
+            "🌅 Morning Peak Gap",
+            f"{baseline_result['baseline_understaffing']:.1f} units",
+            help="Staffing shortage during 6 AM - 12 PM peak"
+        )
+    
+    # Show baseline hourly pattern
+    baseline_gaps = baseline_result['baseline_gaps']
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### 📈 Current Baseline: Demand vs Capacity")
+        baseline_chart = create_demand_vs_capacity_chart(baseline_gaps, "Current Baseline Situation")
+        st.plotly_chart(baseline_chart, use_container_width=True)
+    
+    with col2:
+        st.markdown("#### 🚨 Current Problems by Hour")
+        
+        # Create problem areas chart
+        fig_problems = go.Figure()
+        
+        # Color code the gaps
+        colors = ['red' if gap > 5 else 'orange' if gap > 0 else 'lightblue' if gap > -20 else 'blue' 
+                 for gap in baseline_gaps['gap']]
+        
+        fig_problems.add_trace(go.Bar(
+            x=baseline_gaps['hour'],
+            y=baseline_gaps['gap'],
+            marker_color=colors,
+            name='Staffing Gap',
+            hovertemplate='<b>Hour %{x}:00</b><br>Gap: %{y:.1f}<br>%{text}<extra></extra>',
+            text=['Severe Understaffing' if gap > 5 else 'Understaffing' if gap > 0 else 
+                  'Balanced' if gap > -20 else 'Overstaffing' for gap in baseline_gaps['gap']]
+        ))
+        
+        fig_problems.add_hline(y=0, line_dash="dash", line_color="gray")
+        fig_problems.update_layout(
+            title="Current Staffing Problems",
+            xaxis_title="Hour of Day",
+            yaxis_title="Gap (Positive = Understaffed)",
+            height=400,
+            showlegend=False
+        )
+        
+        st.plotly_chart(fig_problems, use_container_width=True)
+    
+    # Problem summary
+    understaffed_hours = len(baseline_gaps[baseline_gaps['gap'] > 0])
+    overstaffed_hours = len(baseline_gaps[baseline_gaps['gap'] < -10])
+    peak_understaffing = baseline_gaps['gap'].max()
+    peak_overstaffing = baseline_gaps['gap'].min()
+    
+    st.warning(f"""
+    **🚨 Current Baseline Problems:**
+    - **{understaffed_hours} hours** with understaffing (gap > 0)
+    - **{overstaffed_hours} hours** with significant overstaffing (gap < -10)  
+    - **Peak understaffing**: {peak_understaffing:.1f} passengers at hour {baseline_gaps.loc[baseline_gaps['gap'].idxmax(), 'hour']}:00
+    - **Peak overstaffing**: {abs(peak_overstaffing):.1f} excess capacity at hour {baseline_gaps.loc[baseline_gaps['gap'].idxmin(), 'hour']}:00
+    """)
+    
+    st.markdown("---")
+    st.subheader("🎯 Optimization Solutions")
+    st.markdown("**Test different strategies to solve the baseline problems**")
+    
     # Scenario selector and custom builder
     col1, col2 = st.columns([2, 1])
     
     with col1:
         scenario_names = [s['scenario_name'] for s in analysis_results['detailed_results']]
+        # Remove baseline from selection options since we show it separately
+        optimization_scenarios = [name for name in scenario_names if name != 'Baseline (Current)']
+        
         selected_scenario = st.selectbox(
-            "Select Optimization Scenario",
-            scenario_names,
-            index=scenario_names.index(analysis_results['best_scenario']['scenario_name'])
+            "Select Optimization Strategy",
+            optimization_scenarios,
+            index=optimization_scenarios.index(analysis_results['best_scenario']['scenario_name']) if analysis_results['best_scenario']['scenario_name'] in optimization_scenarios else 0
         )
     
     with col2:
@@ -764,11 +867,10 @@ def create_solutions_tab(simulator, analysis_results):
         current_gaps = current_result['scenario_gaps']
         scenario_title = selected_scenario
     
-    # Solution impact metrics
-    baseline_result = analysis_results['detailed_results'][0]
-    
+    # Solution impact metrics - compared to baseline
     st.markdown("---")
-    st.subheader(f"📊 Impact Analysis: {scenario_title}")
+    st.subheader(f"📊 Optimization Impact: {scenario_title}")
+    st.markdown("**Improvements compared to current baseline situation**")
     
     col1, col2, col3, col4 = st.columns(4)
     
@@ -777,74 +879,95 @@ def create_solutions_tab(simulator, analysis_results):
         improvement_pct = (understaffing_change / max(current_result['baseline_understaffing'], 1)) * 100
         
         st.metric(
-            "Understaffing Reduction",
+            "✅ Understaffing Solved",
             f"{understaffing_change:.1f} pax-hrs",
-            f"{improvement_pct:.1f}% improvement"
+            f"{improvement_pct:.1f}% improvement",
+            delta_color="normal"
         )
     
     with col2:
+        wait_time_saved = current_result['wait_time_reduction_min']
         st.metric(
-            "Wait Time Reduction",
-            f"{current_result['wait_time_reduction_min']:.1f} min",
-            "Daily average"
+            "⏰ Wait Time Saved",
+            f"{wait_time_saved:.1f} min/day",
+            "Daily average reduction",
+            delta_color="normal"
         )
     
     with col3:
+        complaints_prevented = current_result['estimated_complaints_reduction']
         st.metric(
-            "Fewer Complaints",
-            f"{current_result['estimated_complaints_reduction']}",
-            "Per day estimate"
+            "😊 Complaints Prevented",
+            f"{complaints_prevented}",
+            "Fewer daily complaints",
+            delta_color="normal"
         )
     
     with col4:
         morning_improvement = current_result['morning_improvement']
+        morning_improvement_pct = (morning_improvement / max(baseline_result['baseline_understaffing'], 1)) * 100
         st.metric(
-            "Morning Peak Fix",
+            "🌅 Morning Peak Fixed",
             f"{morning_improvement:.1f} gap units",
-            "6 AM - 12 PM period"
+            f"{morning_improvement_pct:.1f}% of problem solved",
+            delta_color="normal"
         )
     
-    # Visualization section
+    # Baseline vs Optimized comparison
     st.markdown("---")
     
     col1, col2 = st.columns(2)
     
     with col1:
-        st.subheader("📈 Demand vs Capacity Comparison")
+        st.subheader("📈 Optimized Solution")
         demand_chart = create_demand_vs_capacity_chart(current_gaps, f"Optimized: {scenario_title}")
         st.plotly_chart(demand_chart, use_container_width=True)
     
     with col2:
-        st.subheader("📊 Before vs After Gaps")
-        baseline_gaps = baseline_result['baseline_gaps']
+        st.subheader("📊 Baseline vs Optimized Comparison")
         
         comparison_fig = go.Figure()
         comparison_fig.add_trace(go.Scatter(
             x=baseline_gaps['hour'],
             y=baseline_gaps['gap'],
             mode='lines+markers',
-            name='Current (Baseline)',
-            line=dict(color='red', width=3)
+            name='❌ Current Baseline',
+            line=dict(color='red', width=3),
+            marker=dict(size=8)
         ))
         comparison_fig.add_trace(go.Scatter(
             x=current_gaps['hour'],
             y=current_gaps['gap'],
             mode='lines+markers',
-            name=f'Optimized ({scenario_title})',
-            line=dict(color='green', width=3)
+            name=f'✅ Optimized ({scenario_title})',
+            line=dict(color='green', width=3),
+            marker=dict(size=8)
         ))
         comparison_fig.add_hline(y=0, line_dash="dash", line_color="gray")
         comparison_fig.update_layout(
-            title="Staffing Gap: Current vs Optimized",
+            title="Staffing Gap: Baseline vs Optimized",
             xaxis_title="Hour of Day",
             yaxis_title="Gap (Demand - Capacity)",
             height=400
         )
         st.plotly_chart(comparison_fig, use_container_width=True)
     
+    # Improvement summary
+    problems_solved = len(baseline_gaps[baseline_gaps['gap'] > 0]) - len(current_gaps[current_gaps['gap'] > 0])
+    efficiency_gained = abs(baseline_gaps[baseline_gaps['gap'] < -10]['gap'].sum()) - abs(current_gaps[current_gaps['gap'] < -10]['gap'].sum())
+    
+    st.success(f"""
+    **✅ Solution Summary:**
+    - **{problems_solved} understaffed hours** eliminated  
+    - **{efficiency_gained:.1f} units** of overstaffing reduced
+    - **{improvement_pct:.1f}% overall improvement** in staffing efficiency
+    - **{morning_improvement_pct:.1f}% of morning peak problems** solved
+    """)
+    
     # All scenarios performance
     st.markdown("---")
-    st.subheader("🏆 All Scenarios Performance Comparison")
+    st.subheader("🏆 All Optimization Strategies Comparison")
+    st.markdown("**Compare all strategies against the baseline**")
     
     col1, col2 = st.columns(2)
     
