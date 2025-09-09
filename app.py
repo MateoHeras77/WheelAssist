@@ -205,114 +205,390 @@ def create_improvement_chart(summary_df):
     
     return fig
 
-def create_interactive_scenario_builder():
-    """Create interactive scenario builder in sidebar"""
+def create_data_overview_tab(simulator):
+    """Create comprehensive data overview tab"""
     
-    st.sidebar.markdown('<div class="sidebar-header">🎛️ Custom Scenario Builder</div>', unsafe_allow_html=True)
+    st.header("📊 Current Situation Analysis")
+    st.markdown("**Understanding the current ACAP staffing challenges at Toronto Pearson T1**")
     
-    # Agent reallocation controls
-    st.sidebar.markdown("**Morning Boost (6 AM - 12 PM)**")
-    morning_agents = st.sidebar.slider(
-        "Additional agents",
-        min_value=0,
-        max_value=10,
-        value=4,
-        step=1,
-        key="morning_agents"
-    )
+    # Load raw datasets
+    flight_data = pd.read_csv('data/synthetic/flight_demand.csv')
+    staffing_data = pd.read_csv('data/synthetic/staffing_schedule.csv')
+    gate_data = pd.read_csv('data/synthetic/gate_metadata.csv')
+    service_data = pd.read_csv('data/synthetic/service_points.csv')
+    ops_data = pd.read_csv('data/synthetic/ops_metrics.csv')
     
-    st.sidebar.markdown("**Evening Reduction (2 PM - 8 PM)**")
-    evening_reduction = st.sidebar.slider(
-        "Agents to remove",
-        min_value=0,
-        max_value=10,
-        value=4,
-        step=1,
-        key="evening_reduction"
-    )
+    # Filters section
+    st.subheader("🔍 Data Filters")
     
-    # Time range selectors
-    st.sidebar.markdown("**Fine-tune Time Windows**")
+    col1, col2, col3 = st.columns(3)
     
-    morning_start = st.sidebar.time_input(
-        "Morning boost start",
-        value=time(8, 0),
-        key="morning_start"
-    )
+    with col1:
+        selected_terminal = st.selectbox("Terminal", ["All", "T1"], index=1)
+        selected_days = st.multiselect(
+            "Day of Week", 
+            flight_data['day_of_week'].unique(),
+            default=flight_data['day_of_week'].unique()
+        )
     
-    morning_end = st.sidebar.time_input(
-        "Morning boost end",
-        value=time(12, 0),
-        key="morning_end"
-    )
+    with col2:
+        selected_gates = st.multiselect(
+            "Gates",
+            flight_data['gate_id'].unique(),
+            default=flight_data['gate_id'].unique()
+        )
+        
+    with col3:
+        selected_season = st.multiselect(
+            "Season",
+            flight_data['season'].unique(),
+            default=flight_data['season'].unique()
+        )
     
-    evening_start = st.sidebar.time_input(
-        "Evening reduction start",
-        value=time(16, 0),
-        key="evening_start"
-    )
+    # Apply filters
+    filtered_flights = flight_data[
+        (flight_data['day_of_week'].isin(selected_days)) &
+        (flight_data['gate_id'].isin(selected_gates)) &
+        (flight_data['season'].isin(selected_season))
+    ]
     
-    evening_end = st.sidebar.time_input(
-        "Evening reduction end",
-        value=time(20, 0),
-        key="evening_end"
-    )
+    # Current situation metrics
+    st.markdown("---")
+    st.subheader("📈 Current Situation Metrics")
     
-    # Build custom scenario
-    custom_adjustments = []
+    col1, col2, col3, col4 = st.columns(4)
     
-    if morning_agents > 0:
-        custom_adjustments.append({
-            'start_time': morning_start,
-            'end_time': morning_end,
-            'agent_change': morning_agents
-        })
+    with col1:
+        avg_daily_flights = len(filtered_flights) / len(filtered_flights['date'].unique())
+        st.metric("Avg Daily Flights", f"{avg_daily_flights:.0f}")
     
-    if evening_reduction > 0:
-        custom_adjustments.append({
-            'start_time': evening_start,
-            'end_time': evening_end,
-            'agent_change': -evening_reduction
-        })
+    with col2:
+        avg_acap_rate = (filtered_flights['pax_acaps'].sum() / filtered_flights['pax_total'].sum()) * 100
+        st.metric("ACAP Rate", f"{avg_acap_rate:.1f}%")
     
-    return custom_adjustments
+    with col3:
+        total_agents = staffing_data['agents_assigned'].sum() / len(staffing_data['date'].unique())
+        st.metric("Daily Agents", f"{total_agents:.0f}")
+    
+    with col4:
+        avg_complaints = ops_data['complaints'].mean()
+        st.metric("Avg Daily Complaints", f"{avg_complaints:.1f}")
+    
+    # Detailed data sections
+    st.markdown("---")
+    
+    # Flight demand analysis
+    with st.expander("✈️ Flight Demand Analysis", expanded=False):
+        st.markdown("**Hourly flight distribution and ACAP demand patterns**")
+        
+        # Create hourly demand chart
+        filtered_flights['hour'] = pd.to_datetime(filtered_flights['arrival_time'], format='%H:%M').dt.hour
+        hourly_stats = filtered_flights.groupby('hour').agg({
+            'flight_id': 'count',
+            'pax_total': 'sum',
+            'pax_acaps': 'sum'
+        }).reset_index()
+        hourly_stats.columns = ['Hour', 'Flights', 'Total_Passengers', 'ACAP_Passengers']
+        
+        fig_hourly = go.Figure()
+        fig_hourly.add_trace(go.Bar(
+            x=hourly_stats['Hour'],
+            y=hourly_stats['Flights'],
+            name='Number of Flights',
+            marker_color='lightblue',
+            yaxis='y'
+        ))
+        fig_hourly.add_trace(go.Scatter(
+            x=hourly_stats['Hour'],
+            y=hourly_stats['ACAP_Passengers'],
+            name='ACAP Passengers',
+            line=dict(color='red', width=3),
+            yaxis='y2'
+        ))
+        
+        fig_hourly.update_layout(
+            title="Hourly Flight Distribution vs ACAP Demand",
+            xaxis_title="Hour of Day",
+            yaxis=dict(title="Number of Flights", side="left"),
+            yaxis2=dict(title="ACAP Passengers", side="right", overlaying="y"),
+            height=400
+        )
+        
+        st.plotly_chart(fig_hourly, use_container_width=True)
+        
+        # Show detailed table
+        st.markdown("**Detailed Flight Data (Sample)**")
+        display_flights = filtered_flights[['flight_id', 'date', 'arrival_time', 'pax_total', 'pax_acaps', 'gate_id', 'day_of_week']].head(10)
+        st.dataframe(display_flights, use_container_width=True)
+    
+    # Gate information
+    with st.expander("🚪 Gate Information & Factors", expanded=False):
+        st.markdown("**Gate locations, distances, and service complexity factors**")
+        
+        # Gate factor explanation
+        st.info("""
+        **Gate Factor Explanation:**
+        - Gate factor represents the service complexity multiplier for each gate
+        - Higher values = longer walking distances = slower service
+        - Factor ranges from 1.0 (closest gates) to 1.8+ (farthest gates)
+        - Used in capacity calculation: capacity = base_rate × service_adjustment ÷ gate_factor
+        """)
+        
+        # Enhanced gate data display
+        gate_display = gate_data.copy()
+        gate_display['Service_Impact'] = gate_display['gate_factor'].apply(
+            lambda x: 'Low Impact' if x <= 1.2 else 'Medium Impact' if x <= 1.5 else 'High Impact'
+        )
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Gate factor visualization
+            fig_gates = px.bar(
+                gate_display,
+                x='gate_id',
+                y='gate_factor',
+                color='cluster',
+                title="Gate Service Complexity Factors",
+                labels={'gate_factor': 'Service Factor', 'gate_id': 'Gate ID'}
+            )
+            st.plotly_chart(fig_gates, use_container_width=True)
+        
+        with col2:
+            # Distance vs factor scatter
+            fig_scatter = px.scatter(
+                gate_display,
+                x='distance_m',
+                y='gate_factor',
+                color='cluster',
+                size='gate_factor',
+                title="Distance vs Service Factor",
+                labels={'distance_m': 'Distance (meters)', 'gate_factor': 'Service Factor'}
+            )
+            st.plotly_chart(fig_scatter, use_container_width=True)
+        
+        st.dataframe(gate_display, use_container_width=True)
+    
+    # Service points information
+    with st.expander("🏢 Service Points & Time Requirements", expanded=False):
+        st.markdown("**Different service locations and their time/agent requirements**")
+        
+        # Service points explanation
+        st.info("""
+        **Service Points Explanation:**
+        - **Counter**: Initial check-in and assistance request (3 min/passenger)
+        - **Security**: Security checkpoint assistance (5 min/passenger, 0.8 efficiency)
+        - **Waiting Area**: Pre-boarding assistance (2 min/passenger, 0.9 efficiency)
+        - **Gate**: Final boarding assistance (8 min/passenger, 0.75 efficiency due to distance)
+        """)
+        
+        # Enhanced service data
+        service_display = service_data.copy()
+        service_display['Efficiency_Rating'] = service_display['agents_needed_factor'].apply(
+            lambda x: 'High' if x >= 0.9 else 'Medium' if x >= 0.8 else 'Low'
+        )
+        service_display['Daily_Capacity_per_Agent'] = (60 / service_display['avg_time_per_passenger_min']) * service_display['agents_needed_factor'] * 8  # 8-hour shift
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Time requirements chart
+            fig_time = px.bar(
+                service_display,
+                x='service_type',
+                y='avg_time_per_passenger_min',
+                title="Average Time per Passenger by Service Point",
+                color='avg_time_per_passenger_min',
+                color_continuous_scale='Reds'
+            )
+            st.plotly_chart(fig_time, use_container_width=True)
+        
+        with col2:
+            # Efficiency factors chart
+            fig_efficiency = px.bar(
+                service_display,
+                x='service_type',
+                y='agents_needed_factor',
+                title="Agent Efficiency by Service Point",
+                color='agents_needed_factor',
+                color_continuous_scale='Greens'
+            )
+            st.plotly_chart(fig_efficiency, use_container_width=True)
+        
+        st.dataframe(service_display, use_container_width=True)
+    
+    # Operations metrics
+    with st.expander("📊 Current Operations Metrics", expanded=False):
+        st.markdown("**Daily operational performance showing current issues**")
+        
+        # Ops metrics by day of week
+        ops_by_day = ops_data.groupby('day_of_week').agg({
+            'delayed_boardings': 'mean',
+            'avg_wait_time_min': 'mean',
+            'complaints': 'mean',
+            'agents_absent': 'mean',
+            'overtime_hours': 'mean'
+        }).round(1)
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Wait times and complaints
+            fig_performance = go.Figure()
+            fig_performance.add_trace(go.Bar(
+                x=ops_by_day.index,
+                y=ops_by_day['avg_wait_time_min'],
+                name='Avg Wait Time (min)',
+                marker_color='orange'
+            ))
+            fig_performance.add_trace(go.Scatter(
+                x=ops_by_day.index,
+                y=ops_by_day['complaints'],
+                name='Daily Complaints',
+                line=dict(color='red', width=3),
+                yaxis='y2'
+            ))
+            
+            fig_performance.update_layout(
+                title="Wait Times & Complaints by Day",
+                xaxis_title="Day of Week",
+                yaxis=dict(title="Wait Time (minutes)"),
+                yaxis2=dict(title="Complaints", side="right", overlaying="y"),
+                height=400
+            )
+            st.plotly_chart(fig_performance, use_container_width=True)
+        
+        with col2:
+            # Operational issues
+            fig_ops = go.Figure()
+            fig_ops.add_trace(go.Bar(
+                x=ops_by_day.index,
+                y=ops_by_day['delayed_boardings'],
+                name='Delayed Boardings',
+                marker_color='red'
+            ))
+            fig_ops.add_trace(go.Bar(
+                x=ops_by_day.index,
+                y=ops_by_day['overtime_hours'],
+                name='Overtime Hours',
+                marker_color='purple'
+            ))
+            
+            fig_ops.update_layout(
+                title="Operational Issues by Day",
+                xaxis_title="Day of Week",
+                yaxis_title="Count/Hours",
+                height=400
+            )
+            st.plotly_chart(fig_ops, use_container_width=True)
+        
+        st.markdown("**Detailed Operations Data**")
+        st.dataframe(ops_data, use_container_width=True)
+    
+    # Mathematical formulas
+    with st.expander("🧮 Mathematical Formulas & Calculations", expanded=False):
+        st.markdown("**Key formulas used in the optimization analysis**")
+        
+        st.markdown("""
+        ### Core Capacity Formula
+        ```
+        Hourly Capacity = Agents × Base Rate × Service Adjustment ÷ Gate Factor
+        ```
+        
+        **Where:**
+        - **Base Rate**: 6 passengers per agent per hour (industry standard)
+        - **Service Adjustment**: Efficiency factor by service type (0.75 - 1.0)
+        - **Gate Factor**: Distance/complexity multiplier (1.0 - 1.8+)
+        
+        ### Gap Analysis
+        ```
+        Staffing Gap = Hourly ACAP Demand - Hourly Capacity
+        ```
+        - **Positive Gap**: Understaffing (demand > capacity)
+        - **Negative Gap**: Overstaffing (capacity > demand)
+        
+        ### Performance Metrics
+        ```
+        Wait Time Impact = Gap × 2.5 minutes per passenger
+        Complaint Estimate = Gap × 0.3 complaints per passenger
+        Service Level = (1 - Gap/Demand) × 100%
+        ```
+        
+        ### Example Calculation
+        **Morning Peak (8 AM) - Current Situation:**
+        - ACAP Demand: 25 passengers
+        - Agents Available: 8
+        - Service Type: Gate (0.75 efficiency)
+        - Average Gate Factor: 1.4
+        
+        ```
+        Capacity = 8 × 6 × 0.75 ÷ 1.4 = 25.7 passengers
+        Gap = 25 - 25.7 = -0.7 (slight overstaffing)
+        ```
+        
+        **However, demand varies significantly:**
+        - Peak demand can reach 40+ passengers in a single hour
+        - Current staffing creates gaps of 15-20 passengers during peak times
+        """)
 
-def main():
-    """Main Streamlit application"""
+def create_solutions_tab(simulator, analysis_results):
+    """Create solutions and optimization tab"""
     
-    # Header
-    st.markdown('<h1 class="main-header">♿ WheelAssist Optimization Dashboard</h1>', unsafe_allow_html=True)
-    st.markdown("**Optimizing wheelchair assistance staffing at Toronto Pearson Terminal 1**")
+    st.header("💡 Optimization Solutions")
+    st.markdown("**Data-driven staffing reallocation strategies and their expected impact**")
     
-    # Load data
-    analysis_results = load_data()
-    if analysis_results is None:
-        st.stop()
+    # Scenario selector and custom builder
+    col1, col2 = st.columns([2, 1])
     
-    simulator = get_simulator()
+    with col1:
+        scenario_names = [s['scenario_name'] for s in analysis_results['detailed_results']]
+        selected_scenario = st.selectbox(
+            "Select Optimization Scenario",
+            scenario_names,
+            index=scenario_names.index(analysis_results['best_scenario']['scenario_name'])
+        )
     
-    # Sidebar controls
-    st.sidebar.markdown('<div class="sidebar-header">📊 Analysis Controls</div>', unsafe_allow_html=True)
-    
-    # Scenario selector
-    scenario_names = [s['scenario_name'] for s in analysis_results['detailed_results']]
-    selected_scenario = st.sidebar.selectbox(
-        "Select Scenario",
-        scenario_names,
-        index=scenario_names.index(analysis_results['best_scenario']['scenario_name'])
-    )
+    with col2:
+        use_custom = st.checkbox("Use Custom Scenario", value=False)
     
     # Custom scenario builder
-    custom_adjustments = create_interactive_scenario_builder()
-    
-    use_custom = st.sidebar.checkbox("Use Custom Scenario", value=False)
-    
-    # Main content
     if use_custom:
-        # Evaluate custom scenario
+        st.markdown("### 🎛️ Custom Scenario Builder")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            morning_agents = st.slider("Morning Boost (+agents)", 0, 10, 4)
+            morning_start = st.time_input("Start Time", value=time(8, 0))
+        
+        with col2:
+            evening_reduction = st.slider("Evening Reduction (-agents)", 0, 10, 4)
+            evening_start = st.time_input("Reduce From", value=time(16, 0))
+        
+        with col3:
+            morning_end = st.time_input("End Time", value=time(12, 0))
+        
+        with col4:
+            evening_end = st.time_input("Reduce Until", value=time(20, 0))
+        
+        # Build custom scenario
+        custom_adjustments = []
+        if morning_agents > 0:
+            custom_adjustments.append({
+                'start_time': morning_start,
+                'end_time': morning_end,
+                'agent_change': morning_agents
+            })
+        if evening_reduction > 0:
+            custom_adjustments.append({
+                'start_time': evening_start,
+                'end_time': evening_end,
+                'agent_change': -evening_reduction
+            })
+        
         custom_scenario = {
             'name': 'Custom',
-            'description': f'Custom reallocation: +{st.session_state.morning_agents} AM, -{st.session_state.evening_reduction} PM',
+            'description': f'Custom: +{morning_agents} agents {morning_start}-{morning_end}, -{evening_reduction} agents {evening_start}-{evening_end}',
             'adjustments': custom_adjustments
         }
         
@@ -320,13 +596,15 @@ def main():
         current_gaps = current_result['scenario_gaps']
         scenario_title = "Custom Scenario"
     else:
-        # Use selected predefined scenario
         current_result = next(r for r in analysis_results['detailed_results'] if r['scenario_name'] == selected_scenario)
         current_gaps = current_result['scenario_gaps']
         scenario_title = selected_scenario
     
-    # Key metrics row
-    baseline_result = analysis_results['detailed_results'][0]  # Baseline is first
+    # Solution impact metrics
+    baseline_result = analysis_results['detailed_results'][0]
+    
+    st.markdown("---")
+    st.subheader(f"📊 Impact Analysis: {scenario_title}")
     
     col1, col2, col3, col4 = st.columns(4)
     
@@ -337,21 +615,21 @@ def main():
         st.metric(
             "Understaffing Reduction",
             f"{understaffing_change:.1f} pax-hrs",
-            f"{improvement_pct:.1f}%"
+            f"{improvement_pct:.1f}% improvement"
         )
     
     with col2:
         st.metric(
             "Wait Time Reduction",
             f"{current_result['wait_time_reduction_min']:.1f} min",
-            f"Per day average"
+            "Daily average"
         )
     
     with col3:
         st.metric(
             "Fewer Complaints",
             f"{current_result['estimated_complaints_reduction']}",
-            f"Daily estimate"
+            "Per day estimate"
         )
     
     with col4:
@@ -359,128 +637,168 @@ def main():
         st.metric(
             "Morning Peak Fix",
             f"{morning_improvement:.1f} gap units",
-            f"6 AM - 12 PM period"
+            "6 AM - 12 PM period"
         )
     
-    # Visualizations
+    # Visualization section
     st.markdown("---")
     
-    # Demand vs Capacity chart
     col1, col2 = st.columns(2)
     
     with col1:
-        st.subheader("📈 Current Scenario: Demand vs Capacity")
-        demand_chart = create_demand_vs_capacity_chart(current_gaps, f"Demand vs Capacity - {scenario_title}")
+        st.subheader("📈 Demand vs Capacity Comparison")
+        demand_chart = create_demand_vs_capacity_chart(current_gaps, f"Optimized: {scenario_title}")
         st.plotly_chart(demand_chart, use_container_width=True)
     
     with col2:
-        st.subheader("📊 Baseline vs Current Comparison")
+        st.subheader("📊 Before vs After Gaps")
         baseline_gaps = baseline_result['baseline_gaps']
         
-        # Create comparison chart
         comparison_fig = go.Figure()
-        
         comparison_fig.add_trace(go.Scatter(
             x=baseline_gaps['hour'],
             y=baseline_gaps['gap'],
             mode='lines+markers',
-            name='Baseline Gap',
-            line=dict(color='#ff7f0e', width=3)
+            name='Current (Baseline)',
+            line=dict(color='red', width=3)
         ))
-        
         comparison_fig.add_trace(go.Scatter(
             x=current_gaps['hour'],
             y=current_gaps['gap'],
             mode='lines+markers',
-            name=f'{scenario_title} Gap',
-            line=dict(color='#1f77b4', width=3)
+            name=f'Optimized ({scenario_title})',
+            line=dict(color='green', width=3)
         ))
-        
         comparison_fig.add_hline(y=0, line_dash="dash", line_color="gray")
-        
         comparison_fig.update_layout(
-            title="Staffing Gap Comparison",
+            title="Staffing Gap: Current vs Optimized",
             xaxis_title="Hour of Day",
             yaxis_title="Gap (Demand - Capacity)",
-            height=400,
-            template='plotly_white'
+            height=400
         )
-        
         st.plotly_chart(comparison_fig, use_container_width=True)
     
-    # Scenario performance and heatmap
+    # All scenarios performance
     st.markdown("---")
+    st.subheader("🏆 All Scenarios Performance Comparison")
     
     col1, col2 = st.columns(2)
     
     with col1:
-        st.subheader("🏆 All Scenarios Performance")
         improvement_chart = create_improvement_chart(analysis_results['summary'])
         st.plotly_chart(improvement_chart, use_container_width=True)
     
     with col2:
-        st.subheader("🔥 Gap Heatmap by Scenario")
         heatmap = create_gap_heatmap(simulator, analysis_results['scenarios'])
         st.plotly_chart(heatmap, use_container_width=True)
     
     # Business recommendations
     st.markdown("---")
-    st.subheader("💼 Business Recommendations")
+    st.subheader("💼 Implementation Recommendations")
     
     if use_custom:
         description = custom_scenario['description']
     else:
         description = current_result['description']
     
-    rec_col1, rec_col2 = st.columns([2, 1])
+    col1, col2 = st.columns([2, 1])
     
-    with rec_col1:
+    with col1:
         st.markdown(f"""
-        **Recommended Action:** {description}
+        ### Recommended Action
+        **{description}**
         
-        **Expected Outcomes:**
+        ### Expected Outcomes
         - 🎯 **{improvement_pct:.1f}% reduction** in understaffing during peak hours
-        - ⏱️ **{current_result['wait_time_reduction_min']:.1f} minutes less** average wait time
-        - 😊 **{current_result['estimated_complaints_reduction']} fewer** passenger complaints daily
-        - 💰 **Better resource utilization** - reduce evening overstaffing
+        - ⏱️ **{current_result['wait_time_reduction_min']:.1f} minutes** less average wait time daily
+        - 😊 **{current_result['estimated_complaints_reduction']} fewer** passenger complaints per day
+        - 💰 **Better resource utilization** - reduce evening overstaffing waste
         
-        **Implementation Priority:**
-        1. Focus on morning peak hours (6 AM - 12 PM)
-        2. Prioritize gates E75, E80, E85 (higher distance factors)
-        3. Monitor wait times and adjust weekly
+        ### Implementation Steps
+        1. **Week 1**: Notify staff of schedule changes, begin transition
+        2. **Week 2**: Implement new morning shift allocations
+        3. **Week 3**: Monitor performance metrics, adjust as needed
+        4. **Week 4**: Full implementation and performance review
+        
+        ### Priority Focus Areas
+        - **Gates E75, E80, E85**: Highest distance factors (1.2-1.6)
+        - **Morning Peak (8-11 AM)**: Highest demand concentration
+        - **Service Point Optimization**: Focus on gate assistance efficiency
         """)
     
-    with rec_col2:
+    with col2:
         st.markdown("""
-        **Key Success Metrics:**
+        ### Success Metrics
+        **Targets to Monitor:**
         - Wait time < 15 minutes
         - Complaints < 3 per day
         - Zero delayed boardings
-        - Balanced capacity utilization
+        - Balanced utilization
+        
+        ### Risk Mitigation
+        - **Staff Training**: Ensure smooth transition
+        - **Backup Coverage**: Maintain minimum staffing
+        - **Performance Monitoring**: Daily metric tracking
+        - **Flexibility**: Adjust based on results
+        
+        ### Cost-Benefit
+        - **No additional hiring** required
+        - **Reduced overtime** costs
+        - **Higher satisfaction** scores
+        - **Improved efficiency** metrics
         """)
     
-    # Detailed data tables
-    with st.expander("📋 View Detailed Hourly Data"):
+    # Detailed scenario comparison table
+    with st.expander("📋 Detailed Scenario Comparison", expanded=False):
+        st.dataframe(analysis_results['summary'], use_container_width=True)
+    
+    # Hourly breakdown table
+    with st.expander("⏰ Hourly Gap Analysis", expanded=False):
+        hourly_comparison = pd.DataFrame({
+            'Hour': range(24),
+            'Current_Demand': baseline_gaps['demand'],
+            'Current_Capacity': baseline_gaps['capacity'],
+            'Current_Gap': baseline_gaps['gap'].round(1),
+            'Optimized_Capacity': current_gaps['capacity'],
+            'Optimized_Gap': current_gaps['gap'].round(1),
+            'Improvement': (baseline_gaps['gap'] - current_gaps['gap']).round(1)
+        })
         
-        tab1, tab2, tab3 = st.tabs(["Current Scenario", "Scenario Comparison", "Raw Data"])
+        # Color coding for gaps
+        def color_gaps(val):
+            if val > 5:
+                return 'background-color: #ffcccc'  # Light red for high understaffing
+            elif val > 0:
+                return 'background-color: #ffe6cc'  # Light orange for mild understaffing
+            elif val < -10:
+                return 'background-color: #ccccff'  # Light blue for high overstaffing
+            else:
+                return 'background-color: #ccffcc'  # Light green for balanced
         
-        with tab1:
-            st.dataframe(
-                current_gaps[['hour', 'demand', 'capacity', 'gap', 'understaffed', 'overstaffed']],
-                use_container_width=True
-            )
-        
-        with tab2:
-            st.dataframe(
-                analysis_results['summary'],
-                use_container_width=True
-            )
-        
-        with tab3:
-            # Show sample of original data
-            st.markdown("**Flight Demand Sample:**")
-            sample_flights = pd.read_csv('data/synthetic/flight_demand.csv').head(10)
-            st.dataframe(sample_flights, use_container_width=True)
+        styled_df = hourly_comparison.style.applymap(color_gaps, subset=['Current_Gap', 'Optimized_Gap'])
+        st.dataframe(styled_df, use_container_width=True)
 
+def main():
+    """Main Streamlit application with enhanced tabs"""
+    
+    # Header
+    st.markdown('<h1 class="main-header">♿ WheelAssist Optimization Dashboard</h1>', unsafe_allow_html=True)
+    st.markdown("**Advanced wheelchair assistance staffing optimization for Toronto Pearson Terminal 1**")
+    
+    # Load data
+    analysis_results = load_data()
+    if analysis_results is None:
+        st.stop()
+    
+    simulator = get_simulator()
+    
+    # Create main tabs
+    tab1, tab2 = st.tabs(["📊 Current Situation Analysis", "💡 Optimization Solutions"])
+    
+    with tab1:
+        create_data_overview_tab(simulator)
+    
+    with tab2:
+        create_solutions_tab(simulator, analysis_results)
 if __name__ == "__main__":
     main()
