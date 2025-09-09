@@ -218,64 +218,195 @@ def create_data_overview_tab(simulator):
     service_data = pd.read_csv('data/synthetic/service_points.csv')
     ops_data = pd.read_csv('data/synthetic/ops_metrics.csv')
     
+    # Add airline extraction from flight_id
+    flight_data['airline'] = flight_data['flight_id'].str[:2]
+    flight_data['date'] = pd.to_datetime(flight_data['date'])
+    
     # Filters section
     st.subheader("🔍 Data Filters")
     
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
+        st.markdown("**Location & Terminal**")
         selected_terminal = st.selectbox("Terminal", ["All", "T1"], index=1)
-        selected_days = st.multiselect(
-            "Day of Week", 
-            flight_data['day_of_week'].unique(),
-            default=flight_data['day_of_week'].unique()
+        selected_gates = st.multiselect(
+            "Gates",
+            sorted(flight_data['gate_id'].unique()),
+            default=sorted(flight_data['gate_id'].unique())
         )
     
     with col2:
-        selected_gates = st.multiselect(
-            "Gates",
-            flight_data['gate_id'].unique(),
-            default=flight_data['gate_id'].unique()
+        st.markdown("**Time Filters**")
+        selected_days = st.multiselect(
+            "Day of Week", 
+            ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+            default=["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
         )
-        
-    with col3:
         selected_season = st.multiselect(
             "Season",
-            flight_data['season'].unique(),
-            default=flight_data['season'].unique()
+            sorted(flight_data['season'].unique()),
+            default=sorted(flight_data['season'].unique())
+        )
+    
+    with col3:
+        st.markdown("**Date Range**")
+        min_date = flight_data['date'].min().date()
+        max_date = flight_data['date'].max().date()
+        
+        st.info(f"Available data: {min_date} to {max_date}")
+        
+        date_range = st.date_input(
+            "Select Date Range",
+            value=(min_date, max_date),
+            min_value=min_date,
+            max_value=max_date,
+            format="YYYY-MM-DD",
+            help="Select start and end dates for analysis"
+        )
+        
+        # Handle single date selection
+        if isinstance(date_range, tuple) and len(date_range) == 2:
+            start_date, end_date = date_range
+        elif isinstance(date_range, tuple) and len(date_range) == 1:
+            start_date = end_date = date_range[0]
+        else:
+            start_date = end_date = date_range
+    
+    with col4:
+        st.markdown("**Airlines & Flights**")
+        available_airlines = sorted(flight_data['airline'].unique())
+        selected_airlines = st.multiselect(
+            "Airlines",
+            available_airlines,
+            default=available_airlines,
+            help="First 2 characters of flight ID (e.g., AA from AA448)"
+        )
+        
+        # Flight ID filter (optional)
+        flight_id_filter = st.text_input(
+            "Flight ID Filter (optional)",
+            placeholder="e.g., AA448, WS, 255",
+            help="Enter full flight ID, airline code, or flight number"
         )
     
     # Apply filters
     filtered_flights = flight_data[
         (flight_data['day_of_week'].isin(selected_days)) &
         (flight_data['gate_id'].isin(selected_gates)) &
-        (flight_data['season'].isin(selected_season))
+        (flight_data['season'].isin(selected_season)) &
+        (flight_data['airline'].isin(selected_airlines)) &
+        (flight_data['date'].dt.date >= start_date) &
+        (flight_data['date'].dt.date <= end_date)
     ]
+    
+    # Apply flight ID filter if provided
+    if flight_id_filter.strip():
+        filter_text = flight_id_filter.strip().upper()
+        filtered_flights = filtered_flights[
+            filtered_flights['flight_id'].str.contains(filter_text, case=False, na=False)
+        ]
+    
+    # Filter statistics
+    total_flights = len(flight_data)
+    filtered_count = len(filtered_flights)
+    filter_percentage = (filtered_count / total_flights * 100) if total_flights > 0 else 0
+    
+    st.info(f"📊 **Filter Results**: Showing {filtered_count:,} flights out of {total_flights:,} total ({filter_percentage:.1f}%)")
+    
+    # Show filter summary
+    if filtered_count > 0:
+        unique_dates = len(filtered_flights['date'].dt.date.unique())
+        unique_airlines = len(filtered_flights['airline'].unique())
+        unique_gates = len(filtered_flights['gate_id'].unique())
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Date Range", f"{unique_dates} days")
+        with col2:
+            st.metric("Airlines", f"{unique_airlines} carriers")
+        with col3:
+            st.metric("Gates", f"{unique_gates} gates")
+        with col4:
+            avg_acap_rate = (filtered_flights['pax_acaps'].sum() / filtered_flights['pax_total'].sum() * 100) if filtered_flights['pax_total'].sum() > 0 else 0
+            st.metric("ACAP Rate", f"{avg_acap_rate:.1f}%")
     
     # Current situation metrics
     st.markdown("---")
     st.subheader("📈 Current Situation Metrics")
     
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        avg_daily_flights = len(filtered_flights) / len(filtered_flights['date'].unique())
-        st.metric("Avg Daily Flights", f"{avg_daily_flights:.0f}")
-    
-    with col2:
-        avg_acap_rate = (filtered_flights['pax_acaps'].sum() / filtered_flights['pax_total'].sum()) * 100
-        st.metric("ACAP Rate", f"{avg_acap_rate:.1f}%")
-    
-    with col3:
-        total_agents = staffing_data['agents_assigned'].sum() / len(staffing_data['date'].unique())
-        st.metric("Daily Agents", f"{total_agents:.0f}")
-    
-    with col4:
-        avg_complaints = ops_data['complaints'].mean()
-        st.metric("Avg Daily Complaints", f"{avg_complaints:.1f}")
+    if filtered_count > 0:
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            avg_daily_flights = filtered_count / unique_dates if unique_dates > 0 else 0
+            st.metric("Avg Daily Flights", f"{avg_daily_flights:.0f}")
+        
+        with col2:
+            avg_acap_rate = (filtered_flights['pax_acaps'].sum() / filtered_flights['pax_total'].sum()) * 100 if filtered_flights['pax_total'].sum() > 0 else 0
+            st.metric("ACAP Rate", f"{avg_acap_rate:.1f}%")
+        
+        with col3:
+            total_agents = staffing_data['agents_assigned'].sum() / len(staffing_data['date'].unique())
+            st.metric("Daily Agents", f"{total_agents:.0f}")
+        
+        with col4:
+            avg_complaints = ops_data['complaints'].mean()
+            st.metric("Avg Daily Complaints", f"{avg_complaints:.1f}")
+    else:
+        st.warning("⚠️ No flights match the selected filters. Please adjust your filter criteria.")
+        return
     
     # Detailed data sections
     st.markdown("---")
+    
+    # Filter Impact Analysis
+    with st.expander("🔍 Filter Impact Analysis", expanded=False):
+        st.markdown("**How your filters affect the data analysis**")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("**Selected Filters Summary:**")
+            filter_summary = {
+                "Date Range": f"{start_date} to {end_date}",
+                "Airlines": f"{len(selected_airlines)} selected: {', '.join(selected_airlines)}",
+                "Gates": f"{len(selected_gates)} selected: {', '.join(sorted(selected_gates))}",
+                "Days": f"{len(selected_days)} selected: {', '.join(selected_days[:3])}{'...' if len(selected_days) > 3 else ''}",
+                "Seasons": f"{len(selected_season)} selected: {', '.join(selected_season)}",
+                "Flight ID Filter": flight_id_filter if flight_id_filter.strip() else "None"
+            }
+            
+            for key, value in filter_summary.items():
+                st.text(f"• {key}: {value}")
+        
+        with col2:
+            st.markdown("**Data Comparison:**")
+            
+            # Compare filtered vs total data
+            comparison_data = {
+                "Metric": ["Total Flights", "Avg ACAP per Flight", "Peak Hour Flights", "Airlines Represented"],
+                "Full Dataset": [
+                    len(flight_data),
+                    f"{flight_data['pax_acaps'].mean():.1f}",
+                    flight_data.groupby(pd.to_datetime(flight_data['arrival_time'], format='%H:%M').dt.hour)['flight_id'].count().max(),
+                    len(flight_data['airline'].unique())
+                ],
+                "Filtered Data": [
+                    len(filtered_flights),
+                    f"{filtered_flights['pax_acaps'].mean():.1f}" if len(filtered_flights) > 0 else "0.0",
+                    filtered_flights.groupby(pd.to_datetime(filtered_flights['arrival_time'], format='%H:%M').dt.hour)['flight_id'].count().max() if len(filtered_flights) > 0 else 0,
+                    len(filtered_flights['airline'].unique()) if len(filtered_flights) > 0 else 0
+                ]
+            }
+            
+            comparison_df = pd.DataFrame(comparison_data)
+            st.dataframe(comparison_df, use_container_width=True, hide_index=True)
+            
+            # Show filter impact percentage
+            if len(filtered_flights) > 0:
+                coverage_pct = len(filtered_flights) / len(flight_data) * 100
+                st.metric("Data Coverage", f"{coverage_pct:.1f}%", help="Percentage of total data included in current filters")
     
     # Flight demand analysis
     with st.expander("✈️ Flight Demand Analysis", expanded=False):
@@ -290,36 +421,69 @@ def create_data_overview_tab(simulator):
         }).reset_index()
         hourly_stats.columns = ['Hour', 'Flights', 'Total_Passengers', 'ACAP_Passengers']
         
-        fig_hourly = go.Figure()
-        fig_hourly.add_trace(go.Bar(
-            x=hourly_stats['Hour'],
-            y=hourly_stats['Flights'],
-            name='Number of Flights',
-            marker_color='lightblue',
-            yaxis='y'
-        ))
-        fig_hourly.add_trace(go.Scatter(
-            x=hourly_stats['Hour'],
-            y=hourly_stats['ACAP_Passengers'],
-            name='ACAP Passengers',
-            line=dict(color='red', width=3),
-            yaxis='y2'
-        ))
+        col1, col2 = st.columns(2)
         
-        fig_hourly.update_layout(
-            title="Hourly Flight Distribution vs ACAP Demand",
-            xaxis_title="Hour of Day",
-            yaxis=dict(title="Number of Flights", side="left"),
-            yaxis2=dict(title="ACAP Passengers", side="right", overlaying="y"),
-            height=400
+        with col1:
+            fig_hourly = go.Figure()
+            fig_hourly.add_trace(go.Bar(
+                x=hourly_stats['Hour'],
+                y=hourly_stats['Flights'],
+                name='Number of Flights',
+                marker_color='lightblue',
+                yaxis='y'
+            ))
+            fig_hourly.add_trace(go.Scatter(
+                x=hourly_stats['Hour'],
+                y=hourly_stats['ACAP_Passengers'],
+                name='ACAP Passengers',
+                line=dict(color='red', width=3),
+                yaxis='y2'
+            ))
+            
+            fig_hourly.update_layout(
+                title="Hourly Flight Distribution vs ACAP Demand",
+                xaxis_title="Hour of Day",
+                yaxis=dict(title="Number of Flights", side="left"),
+                yaxis2=dict(title="ACAP Passengers", side="right", overlaying="y"),
+                height=400
+            )
+            
+            st.plotly_chart(fig_hourly, use_container_width=True)
+        
+        with col2:
+            # Airline analysis
+            airline_stats = filtered_flights.groupby('airline').agg({
+                'flight_id': 'count',
+                'pax_total': 'sum',
+                'pax_acaps': 'sum'
+            }).reset_index()
+            airline_stats['acap_rate'] = (airline_stats['pax_acaps'] / airline_stats['pax_total'] * 100).round(1)
+            airline_stats.columns = ['Airline', 'Flights', 'Total_Pax', 'ACAP_Pax', 'ACAP_Rate_%']
+            
+            fig_airline = px.bar(
+                airline_stats.sort_values('ACAP_Rate_%', ascending=False),
+                x='Airline',
+                y='ACAP_Rate_%',
+                title="ACAP Rate by Airline",
+                color='ACAP_Rate_%',
+                color_continuous_scale='Reds',
+                labels={'ACAP_Rate_%': 'ACAP Rate (%)'}
+            )
+            fig_airline.update_layout(height=400)
+            st.plotly_chart(fig_airline, use_container_width=True)
+        
+        # Airline summary table
+        st.markdown("**Airline Performance Summary**")
+        st.dataframe(
+            airline_stats.sort_values('Flights', ascending=False),
+            use_container_width=True,
+            hide_index=True
         )
         
-        st.plotly_chart(fig_hourly, use_container_width=True)
-        
-        # Show detailed table
+        # Show detailed flight data
         st.markdown("**Detailed Flight Data (Sample)**")
-        display_flights = filtered_flights[['flight_id', 'date', 'arrival_time', 'pax_total', 'pax_acaps', 'gate_id', 'day_of_week']].head(10)
-        st.dataframe(display_flights, use_container_width=True)
+        display_flights = filtered_flights[['flight_id', 'airline', 'date', 'arrival_time', 'pax_total', 'pax_acaps', 'gate_id', 'day_of_week']].head(20)
+        st.dataframe(display_flights, use_container_width=True, hide_index=True)
     
     # Gate information
     with st.expander("🚪 Gate Information & Factors", expanded=False):
