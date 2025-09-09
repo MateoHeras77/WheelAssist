@@ -1,0 +1,5 @@
+service_type,avg_time_per_passenger_min,agents_needed_factor
+Counter,3.0,1.0
+Security,5.0,0.8
+WaitingArea,2.0,0.9
+Gate,8.0,0.75
